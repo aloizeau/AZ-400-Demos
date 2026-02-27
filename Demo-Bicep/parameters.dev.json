@@ -2,14 +2,25 @@
   "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
   "contentVersion": "1.0.0.0",
   "parameters": {
-    "appName": {
-      "value": "az400demo"
-    },
     "environment": {
       "value": "dev"
     },
-    "appServiceSkuName": {
+    "location": {
+      "value": "westeurope"
+    },
+    "appName": {
+      "value": "az400demo"
+    },
+    "appServicePlanSku": {
       "value": "B1"
+    },
+    "tags": {
+      "value": {
+        "environment": "dev",
+        "project": "AZ-400-Demo",
+        "managedBy": "Bicep",
+        "owner": "devops-team"
+      }
     }
   }
 }

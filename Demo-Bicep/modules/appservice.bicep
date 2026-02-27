@@ -1,62 +1,83 @@
-@description('Préfixe de nommage (utilisé pour le plan et l\'app web)')
-param name string
+@description('Nom du plan App Service')
+param appServicePlanName string
+
+@description('Nom de la Web App')
+param webAppName string
 
 @description('Région Azure')
 param location string
 
 @description('SKU du plan App Service')
-param skuName string = 'B1'
+param sku string
 
 @description('Chaîne de connexion Application Insights')
 param appInsightsConnectionString string
 
-@description('Nom du compte de stockage')
-param storageAccountName string
+@description('Clé d\'instrumentation Application Insights')
+param appInsightsInstrumentationKey string
 
-resource appServicePlan 'Microsoft.Web/serverfarms@2023-01-01' = {
-  name: '${name}-plan'
+@description('ID de la ressource du compte de stockage')
+param storageAccountId string
+
+@description('Tags des ressources')
+param tags object
+
+// Référence existante au compte de stockage pour appeler listKeys() de façon sécurisée
+resource existingStorageAccount 'Microsoft.Storage/storageAccounts@2023-01-01' existing = {
+  name: last(split(storageAccountId, '/'))
+}
+
+var storageConnectionString = 'DefaultEndpointsProtocol=https;AccountName=${existingStorageAccount.name};AccountKey=${existingStorageAccount.listKeys().keys[0].value};EndpointSuffix=core.windows.net'
+
+resource appServicePlan 'Microsoft.Web/serverfarms@2022-09-01' = {
+  name: appServicePlanName
   location: location
+  tags: tags
   sku: {
-    name: skuName
+    name: sku
+  }
+  properties: {
+    reserved: false
   }
 }
 
-resource webApp 'Microsoft.Web/sites@2023-01-01' = {
-  name: '${name}-app'
+resource webApp 'Microsoft.Web/sites@2022-09-01' = {
+  name: webAppName
   location: location
+  tags: tags
   identity: {
     type: 'SystemAssigned'
   }
   properties: {
     serverFarmId: appServicePlan.id
+    httpsOnly: true
     siteConfig: {
+      minTlsVersion: '1.2'
+      ftpsState: 'Disabled'
+      http20Enabled: true
       appSettings: [
+        {
+          name: 'APPINSIGHTS_INSTRUMENTATIONKEY'
+          value: appInsightsInstrumentationKey
+        }
         {
           name: 'APPLICATIONINSIGHTS_CONNECTION_STRING'
           value: appInsightsConnectionString
         }
         {
-          name: 'AzureWebJobsStorage__accountName'
-          value: storageAccountName
+          name: 'ApplicationInsightsAgent_EXTENSION_VERSION'
+          value: '~3'
+        }
+        {
+          name: 'STORAGE_CONNECTION_STRING'
+          value: storageConnectionString
         }
       ]
-      ftpsState: 'Disabled'
-      minTlsVersion: '1.2'
     }
-    httpsOnly: true
   }
 }
 
-// Assigner le rôle Storage Blob Data Contributor à la Managed Identity de l'app
-resource storageRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(storageAccountName, webApp.id, 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')
-  scope: resourceGroup()
-  properties: {
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')
-    principalId: webApp.identity.principalId
-    principalType: 'ServicePrincipal'
-  }
-}
-
+output webAppId string = webApp.id
+output webAppName string = webApp.name
 output webAppUrl string = 'https://${webApp.properties.defaultHostName}'
 output principalId string = webApp.identity.principalId

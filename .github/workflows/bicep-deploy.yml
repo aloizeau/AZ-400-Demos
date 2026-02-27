@@ -41,7 +41,6 @@ jobs:
     steps:
       - name: Checkout du code
         uses: actions/checkout@v4
-
       - name: Connexion à Azure (Managed Identity)
         uses: azure/login@v2
         with:
@@ -49,7 +48,6 @@ jobs:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
-
       - name: Compilation Bicep (lint)
         uses: azure/CLI@v2
         with:
@@ -92,6 +90,7 @@ jobs:
   # ─────────────────────────────────────────────
   deploy-dev:
     name: 🌱 Déploiement DEV
+
     runs-on: self-hosted
     needs: validate
     if: |
@@ -168,6 +167,7 @@ jobs:
   # ─────────────────────────────────────────────
   deploy-prod:
     name: 🏭 Déploiement PROD
+
     runs-on: self-hosted
     needs: validate
     if: github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'prod'

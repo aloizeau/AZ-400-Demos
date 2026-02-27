@@ -1,53 +1,82 @@
-@description('Nom de l\'application (utilisé pour nommer les ressources)')
-param appName string
-
-@description('Environnement de déploiement')
-@allowed(['dev', 'prod'])
+@description('Environnement de déploiement (dev, staging, prod)')
+@allowed(['dev', 'staging', 'prod'])
 param environment string = 'dev'
 
-@description('Région Azure de déploiement')
+@description('Région Azure pour le déploiement des ressources')
 param location string = resourceGroup().location
 
+@description('Nom de l\'application (sans espaces, en minuscules)')
+@minLength(3)
+@maxLength(20)
+param appName string
+
 @description('SKU du plan App Service')
-param appServiceSkuName string = 'B1'
+@allowed(['F1', 'B1', 'B2', 'S1', 'S2', 'P1v2', 'P2v2'])
+param appServicePlanSku string = 'B1'
 
-var prefix = '${appName}-${environment}'
+@description('Tags communs appliqués à toutes les ressources')
+param tags object = {
+  environment: environment
+  project: 'AZ-400-Demo'
+  managedBy: 'Bicep'
+}
 
+// Variables pour la construction des noms de ressources
+var resourceSuffix = '${appName}-${environment}'
+var appServicePlanName = 'asp-${resourceSuffix}'
+var webAppName = 'app-${resourceSuffix}'
+var storageAccountName = 'st${replace(toLower(appName), '-', '')}${environment}'
+var appInsightsName = 'appi-${resourceSuffix}'
+var logAnalyticsName = 'log-${resourceSuffix}'
+
+// Module : Log Analytics Workspace
 module logAnalytics 'modules/loganalytics.bicep' = {
-  name: 'loganalytics-deploy'
+  name: 'deploy-loganalytics'
   params: {
-    name: '${prefix}-law'
+    name: logAnalyticsName
     location: location
+    tags: tags
   }
 }
 
+// Module : Application Insights
 module appInsights 'modules/appinsights.bicep' = {
-  name: 'appinsights-deploy'
+  name: 'deploy-appinsights'
   params: {
-    name: '${prefix}-ai'
+    name: appInsightsName
     location: location
     logAnalyticsWorkspaceId: logAnalytics.outputs.workspaceId
+    tags: tags
   }
 }
 
-module storage 'modules/storage.bicep' = {
-  name: 'storage-deploy'
+// Module : Compte de stockage
+module storageAccount 'modules/storage.bicep' = {
+  name: 'deploy-storage'
   params: {
-    name: toLower(replace('${appName}${environment}st', '-', ''))
+    name: storageAccountName
     location: location
+    tags: tags
   }
 }
 
+// Module : App Service Plan + Web App
 module appService 'modules/appservice.bicep' = {
-  name: 'appservice-deploy'
+  name: 'deploy-appservice'
   params: {
-    name: prefix
+    appServicePlanName: appServicePlanName
+    webAppName: webAppName
     location: location
-    skuName: appServiceSkuName
+    sku: appServicePlanSku
     appInsightsConnectionString: appInsights.outputs.connectionString
-    storageAccountName: storage.outputs.name
+    appInsightsInstrumentationKey: appInsights.outputs.instrumentationKey
+    storageAccountId: storageAccount.outputs.storageAccountId
+    tags: tags
   }
 }
 
+// Sorties
 output webAppUrl string = appService.outputs.webAppUrl
-output appInsightsKey string = appInsights.outputs.instrumentationKey
+output webAppName string = appService.outputs.webAppName
+output storageAccountName string = storageAccount.outputs.storageAccountName
+output appInsightsName string = appInsights.outputs.appInsightsName
