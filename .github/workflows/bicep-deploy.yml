@@ -1,0 +1,238 @@
+name: 🚀 Déploiement Bicep Azure
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'Demo-Bicep/**'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'Demo-Bicep/**'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environnement cible (dev ou prod)'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+          - dev
+          - prod
+
+permissions:
+  id-token: write
+  contents: read
+  pull-requests: write
+
+env:
+  BICEP_TEMPLATE: Demo-Bicep/main.bicep
+  AZURE_LOCATION: westeurope
+
+jobs:
+  # ─────────────────────────────────────────────
+  # JOB 1 : Validation du template Bicep
+  # ─────────────────────────────────────────────
+  validate:
+    name: 🔍 Validation Bicep
+    runs-on: self-hosted
+    steps:
+      - name: Checkout du code
+        uses: actions/checkout@v4
+
+      - name: Connexion à Azure (Managed Identity)
+        uses: azure/login@v2
+        with:
+          auth-type: IDENTITY
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Compilation Bicep (lint)
+        uses: azure/CLI@v2
+        with:
+          azcliversion: latest
+          inlineScript: |
+            az bicep build --file ${{ env.BICEP_TEMPLATE }}
+            echo "✅ Compilation Bicep réussie"
+
+      - name: Validation What-If — dev
+        uses: azure/CLI@v2
+        with:
+          azcliversion: latest
+          inlineScript: |
+            az deployment group what-if \
+              --resource-group ${{ vars.AZURE_RG_DEV }} \
+              --subscription ${{ vars.AZURE_SUBSCRIPTION_ID }} \
+              --template-file ${{ env.BICEP_TEMPLATE }} \
+              --parameters Demo-Bicep/parameters.dev.json \
+              --result-format FullResourcePayloads
+        continue-on-error: false
+
+      - name: Commentaire PR avec résultat What-If
+        if: github.event_name == 'pull_request'
+        uses: azure/CLI@v2
+        with:
+          azcliversion: latest
+          inlineScript: |
+            RESULT=$(az deployment group what-if \
+              --resource-group ${{ vars.AZURE_RG_DEV }} \
+              --subscription ${{ vars.AZURE_SUBSCRIPTION_ID }} \
+              --template-file ${{ env.BICEP_TEMPLATE }} \
+              --parameters Demo-Bicep/parameters.dev.json \
+              --no-pretty-print 2>&1 || true)
+            echo "WHAT_IF_RESULT<<EOF" >> $GITHUB_ENV
+            echo "$RESULT" >> $GITHUB_ENV
+            echo "EOF" >> $GITHUB_ENV
+
+  # ─────────────────────────────────────────────
+  # JOB 2 : Déploiement en DEV (push sur main)
+  # ─────────────────────────────────────────────
+  deploy-dev:
+    name: 🌱 Déploiement DEV
+    runs-on: self-hosted
+    needs: validate
+    if: |
+      github.event_name == 'push' ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'dev')
+    environment:
+      name: dev
+      url: ${{ steps.get-outputs.outputs.webAppUrl }}
+
+    steps:
+      - name: Checkout du code
+        uses: actions/checkout@v4
+
+      - name: Connexion à Azure (Managed Identity)
+        uses: azure/login@v2
+        with:
+          auth-type: IDENTITY
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Créer le Resource Group si inexistant
+        uses: azure/CLI@v2
+        with:
+          azcliversion: latest
+          inlineScript: |
+            az group create \
+              --name ${{ vars.AZURE_RG_DEV }} \
+              --location ${{ env.AZURE_LOCATION }} \
+              --subscription ${{ vars.AZURE_SUBSCRIPTION_ID }} \
+              --tags environment=dev project=AZ-400-Demo managedBy=Bicep \
+              --output none
+            echo "✅ Resource Group '${{ vars.AZURE_RG_DEV }}' prêt"
+
+      - name: Déploiement Bicep — DEV
+        id: deploy
+        uses: azure/arm-deploy@v2
+        with:
+          subscriptionId: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+          resourceGroupName: ${{ vars.AZURE_RG_DEV }}
+          template: ${{ env.BICEP_TEMPLATE }}
+          parameters: Demo-Bicep/parameters.dev.json
+          deploymentName: deploy-dev-${{ github.run_number }}
+          failOnStdErr: false
+
+      - name: Récupération des sorties
+        id: get-outputs
+        uses: azure/CLI@v2
+        with:
+          azcliversion: latest
+          inlineScript: |
+            WEB_APP_URL=$(az deployment group show \
+              --resource-group ${{ vars.AZURE_RG_DEV }} \
+              --subscription ${{ vars.AZURE_SUBSCRIPTION_ID }} \
+              --name deploy-dev-${{ github.run_number }} \
+              --query "properties.outputs.webAppUrl.value" \
+              --output tsv)
+            echo "webAppUrl=$WEB_APP_URL" >> $GITHUB_OUTPUT
+            echo "🌐 Web App URL : $WEB_APP_URL"
+
+      - name: Résumé du déploiement
+        run: |
+          echo "## 🚀 Déploiement DEV réussi" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Paramètre | Valeur |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Environnement | dev |" >> $GITHUB_STEP_SUMMARY
+          echo "| Resource Group | ${{ vars.AZURE_RG_DEV }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Numéro d'exécution | ${{ github.run_number }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| URL de l'application | ${{ steps.get-outputs.outputs.webAppUrl }} |" >> $GITHUB_STEP_SUMMARY
+
+  # ─────────────────────────────────────────────
+  # JOB 3 : Déploiement en PROD (manuel uniquement)
+  # ─────────────────────────────────────────────
+  deploy-prod:
+    name: 🏭 Déploiement PROD
+    runs-on: self-hosted
+    needs: validate
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'prod'
+    environment:
+      name: prod
+      url: ${{ steps.get-outputs.outputs.webAppUrl }}
+
+    steps:
+      - name: Checkout du code
+        uses: actions/checkout@v4
+
+      - name: Connexion à Azure (Managed Identity)
+        uses: azure/login@v2
+        with:
+          auth-type: IDENTITY
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Créer le Resource Group si inexistant
+        uses: azure/CLI@v2
+        with:
+          azcliversion: latest
+          inlineScript: |
+            az group create \
+              --name ${{ vars.AZURE_RG_PROD }} \
+              --location ${{ env.AZURE_LOCATION }} \
+              --subscription ${{ vars.AZURE_SUBSCRIPTION_ID }} \
+              --tags environment=prod project=AZ-400-Demo managedBy=Bicep \
+              --output none
+            echo "✅ Resource Group '${{ vars.AZURE_RG_PROD }}' prêt"
+
+      - name: Déploiement Bicep — PROD
+        id: deploy
+        uses: azure/arm-deploy@v2
+        with:
+          subscriptionId: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+          resourceGroupName: ${{ vars.AZURE_RG_PROD }}
+          template: ${{ env.BICEP_TEMPLATE }}
+          parameters: Demo-Bicep/parameters.prod.json
+          deploymentName: deploy-prod-${{ github.run_number }}
+          failOnStdErr: false
+
+      - name: Récupération des sorties
+        id: get-outputs
+        uses: azure/CLI@v2
+        with:
+          azcliversion: latest
+          inlineScript: |
+            WEB_APP_URL=$(az deployment group show \
+              --resource-group ${{ vars.AZURE_RG_PROD }} \
+              --subscription ${{ vars.AZURE_SUBSCRIPTION_ID }} \
+              --name deploy-prod-${{ github.run_number }} \
+              --query "properties.outputs.webAppUrl.value" \
+              --output tsv)
+            echo "webAppUrl=$WEB_APP_URL" >> $GITHUB_OUTPUT
+            echo "🌐 Web App URL : $WEB_APP_URL"
+
+      - name: Résumé du déploiement
+        run: |
+          echo "## 🚀 Déploiement PROD réussi" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Paramètre | Valeur |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Environnement | prod |" >> $GITHUB_STEP_SUMMARY
+          echo "| Resource Group | ${{ vars.AZURE_RG_PROD }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Numéro d'exécution | ${{ github.run_number }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| URL de l'application | ${{ steps.get-outputs.outputs.webAppUrl }} |" >> $GITHUB_STEP_SUMMARY
