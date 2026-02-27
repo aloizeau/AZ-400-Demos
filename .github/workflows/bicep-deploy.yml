@@ -37,16 +37,17 @@ jobs:
   # ─────────────────────────────────────────────
   validate:
     name: 🔍 Validation Bicep
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
       - name: Checkout du code
         uses: actions/checkout@v4
-
-      - name: Connexion à Azure
+      - name: Connexion à Azure (Managed Identity)
         uses: azure/login@v2
         with:
-          creds: ${{ secrets.AZURE_CREDENTIALS }}
-
+          auth-type: IDENTITY
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
       - name: Compilation Bicep (lint)
         uses: azure/CLI@v2
         with:
@@ -89,7 +90,8 @@ jobs:
   # ─────────────────────────────────────────────
   deploy-dev:
     name: 🌱 Déploiement DEV
-    runs-on: ubuntu-latest
+
+    runs-on: self-hosted
     needs: validate
     if: |
       github.event_name == 'push' ||
@@ -102,10 +104,13 @@ jobs:
       - name: Checkout du code
         uses: actions/checkout@v4
 
-      - name: Connexion à Azure
+      - name: Connexion à Azure (Managed Identity)
         uses: azure/login@v2
         with:
-          creds: ${{ secrets.AZURE_CREDENTIALS }}
+          auth-type: IDENTITY
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
       - name: Créer le Resource Group si inexistant
         uses: azure/CLI@v2
@@ -162,7 +167,8 @@ jobs:
   # ─────────────────────────────────────────────
   deploy-prod:
     name: 🏭 Déploiement PROD
-    runs-on: ubuntu-latest
+
+    runs-on: self-hosted
     needs: validate
     if: github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'prod'
     environment:
@@ -173,10 +179,13 @@ jobs:
       - name: Checkout du code
         uses: actions/checkout@v4
 
-      - name: Connexion à Azure
+      - name: Connexion à Azure (Managed Identity)
         uses: azure/login@v2
         with:
-          creds: ${{ secrets.AZURE_CREDENTIALS }}
+          auth-type: IDENTITY
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
       - name: Créer le Resource Group si inexistant
         uses: azure/CLI@v2
