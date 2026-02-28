@@ -5,18 +5,18 @@ on:
     branches:
       - main
     paths:
-      - 'Demo-Bicep/**'
+      - "Demo-Bicep/**"
   pull_request:
     branches:
       - main
     paths:
-      - 'Demo-Bicep/**'
+      - "Demo-Bicep/**"
   workflow_dispatch:
     inputs:
       environment:
-        description: 'Environnement cible (dev ou prod)'
+        description: "Environnement cible (dev ou prod)"
         required: true
-        default: 'dev'
+        default: "dev"
         type: choice
         options:
           - dev
@@ -29,6 +29,7 @@ permissions:
 
 env:
   BICEP_TEMPLATE: Demo-Bicep/main.bicep
+  RG_BICEP_TEMPLATE: Demo-Bicep/resourcegroup.bicep
   AZURE_LOCATION: westeurope
 
 jobs:
@@ -41,7 +42,7 @@ jobs:
     steps:
       - name: Checkout du code
         uses: actions/checkout@v4
-        
+
       - name: Connexion à Azure (SPN)
         uses: azure/login@v2
         with:
@@ -54,7 +55,39 @@ jobs:
           azcliversion: latest
           inlineScript: |
             az bicep build --file ${{ env.BICEP_TEMPLATE }}
+            az bicep build --file ${{ env.RG_BICEP_TEMPLATE }}
             echo "✅ Compilation Bicep réussie"
+
+      - name: Validation What-If RG DEV (subscription scope)
+        uses: azure/CLI@v2
+        with:
+          azcliversion: latest
+          inlineScript: |
+            az deployment sub what-if \
+              --subscription ${{ vars.AZURE_SUBSCRIPTION_ID }} \
+              --location ${{ env.AZURE_LOCATION }} \
+              --template-file ${{ env.RG_BICEP_TEMPLATE }} \
+              --name rg-whatif-dev-${{ github.run_number }} \
+              --parameters resourceGroupName=${{ vars.AZURE_RG_DEV }} \
+                           location=${{ env.AZURE_LOCATION }} \
+                           tags='{"environment":"dev","project":"AZ-400-Demo","managedBy":"Bicep"}' \
+              --result-format FullResourcePayloads
+
+      - name: Préparer le Resource Group DEV via Bicep
+        uses: azure/CLI@v2
+        with:
+          azcliversion: latest
+          inlineScript: |
+            az deployment sub create \
+              --subscription ${{ vars.AZURE_SUBSCRIPTION_ID }} \
+              --location ${{ env.AZURE_LOCATION }} \
+              --template-file ${{ env.RG_BICEP_TEMPLATE }} \
+              --name rg-bootstrap-dev-${{ github.run_number }} \
+              --parameters resourceGroupName=${{ vars.AZURE_RG_DEV }} \
+                           location=${{ env.AZURE_LOCATION }} \
+                           tags='{"environment":"dev","project":"AZ-400-Demo","managedBy":"Bicep"}' \
+              --output none
+            echo "✅ Resource Group '${{ vars.AZURE_RG_DEV }}' prêt pour What-If (créé via Bicep)"
 
       - name: Validation What-If — dev
         uses: azure/CLI@v2
@@ -110,18 +143,21 @@ jobs:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
           enable-AzPSSession: true
 
-      - name: Créer le Resource Group si inexistant
+      - name: Créer/Maintenir le Resource Group DEV via Bicep
         uses: azure/CLI@v2
         with:
           azcliversion: latest
           inlineScript: |
-            az group create \
-              --name ${{ vars.AZURE_RG_DEV }} \
-              --location ${{ env.AZURE_LOCATION }} \
+            az deployment sub create \
               --subscription ${{ vars.AZURE_SUBSCRIPTION_ID }} \
-              --tags environment=dev project=AZ-400-Demo managedBy=Bicep \
+              --location ${{ env.AZURE_LOCATION }} \
+              --template-file ${{ env.RG_BICEP_TEMPLATE }} \
+              --name rg-bootstrap-dev-${{ github.run_number }} \
+              --parameters resourceGroupName=${{ vars.AZURE_RG_DEV }} \
+                           location=${{ env.AZURE_LOCATION }} \
+                           tags='{"environment":"dev","project":"AZ-400-Demo","managedBy":"Bicep"}' \
               --output none
-            echo "✅ Resource Group '${{ vars.AZURE_RG_DEV }}' prêt"
+            echo "✅ Resource Group '${{ vars.AZURE_RG_DEV }}' prêt (via Bicep)"
 
       - name: Déploiement Bicep — DEV
         id: deploy
@@ -183,18 +219,21 @@ jobs:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
           enable-AzPSSession: true
 
-      - name: Créer le Resource Group si inexistant
+      - name: Créer/Maintenir le Resource Group PROD via Bicep
         uses: azure/CLI@v2
         with:
           azcliversion: latest
           inlineScript: |
-            az group create \
-              --name ${{ vars.AZURE_RG_PROD }} \
-              --location ${{ env.AZURE_LOCATION }} \
+            az deployment sub create \
               --subscription ${{ vars.AZURE_SUBSCRIPTION_ID }} \
-              --tags environment=prod project=AZ-400-Demo managedBy=Bicep \
+              --location ${{ env.AZURE_LOCATION }} \
+              --template-file ${{ env.RG_BICEP_TEMPLATE }} \
+              --name rg-bootstrap-prod-${{ github.run_number }} \
+              --parameters resourceGroupName=${{ vars.AZURE_RG_PROD }} \
+                           location=${{ env.AZURE_LOCATION }} \
+                           tags='{"environment":"prod","project":"AZ-400-Demo","managedBy":"Bicep"}' \
               --output none
-            echo "✅ Resource Group '${{ vars.AZURE_RG_PROD }}' prêt"
+            echo "✅ Resource Group '${{ vars.AZURE_RG_PROD }}' prêt (via Bicep)"
 
       - name: Déploiement Bicep — PROD
         id: deploy
