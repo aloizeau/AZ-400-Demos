@@ -1,18 +1,26 @@
-changelog:
-  exclude:
-    labels:
-    - ignore-for-release
-    authors:
-    - octocat
-  categories:
-    - title: Breaking Changes 
-      labels:
-        - Semver-Major
-        - breaking-change
-    - title: Exciting New Features 
-      labels:
-        - Semver-Minor
-        - enhancement
-    - title: Other Changes
-      labels:
-        - "*"Commit your new file.
+name: 🚀 Publication de release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: 📝 Création de la release
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout du code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Création de la release avec notes automatiques
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
